@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Headphones, 
@@ -135,9 +137,9 @@ const INITIAL_FALLBACK_SESSIONS: SupportSession[] = [
     category: 'Calendar',
     assigned_agent_name: 'Sarah Jenkins',
     last_message: 'How do I connect my Google Calendar for upcoming WIPA webinars?',
-    last_message_at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
+    last_message_at: '2026-09-03T12:45:00.000Z',
     unread_agent_count: 1,
-    created_at: new Date(Date.now() - 1000 * 60 * 15).toISOString()
+    created_at: '2026-09-03T12:30:00.000Z'
   },
   {
     id: 'demo-session-2',
@@ -151,9 +153,9 @@ const INITIAL_FALLBACK_SESSIONS: SupportSession[] = [
     category: 'Billing',
     assigned_agent_name: 'Sarah Jenkins',
     last_message: 'Need a copy of last month invoice with firm VAT number',
-    last_message_at: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
+    last_message_at: '2026-09-03T12:35:00.000Z',
     unread_agent_count: 0,
-    created_at: new Date(Date.now() - 1000 * 60 * 45).toISOString()
+    created_at: '2026-09-03T12:00:00.000Z'
   },
   {
     id: 'demo-session-3',
@@ -167,9 +169,9 @@ const INITIAL_FALLBACK_SESSIONS: SupportSession[] = [
     category: 'Mentorship',
     assigned_agent_name: 'Sarah Jenkins',
     last_message: 'Thank you Sarah, I submitted the mentor application form.',
-    last_message_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+    last_message_at: '2026-09-03T10:30:00.000Z',
     unread_agent_count: 0,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString()
+    created_at: '2026-09-03T09:30:00.000Z'
   },
   {
     id: 'demo-session-4',
@@ -183,9 +185,9 @@ const INITIAL_FALLBACK_SESSIONS: SupportSession[] = [
     category: 'General',
     assigned_agent_name: 'Sarah Jenkins',
     last_message: 'Resolved: Profile badge update confirmed.',
-    last_message_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+    last_message_at: '2026-09-02T12:00:00.000Z',
     unread_agent_count: 0,
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString()
+    created_at: '2026-09-02T10:00:00.000Z'
   }
 ];
 
@@ -200,7 +202,7 @@ export default function AgentCommandCenter() {
         sender_type: 'system',
         sender_name: 'System',
         content: 'Session initiated via WIPA Member Portal (/platform/chat-support). Priority: Pro SLA.',
-        created_at: new Date(Date.now() - 1000 * 60 * 15).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        created_at: '12:30 PM'
       },
       {
         id: 'm2',
@@ -209,7 +211,7 @@ export default function AgentCommandCenter() {
         sender_name: 'Sarah Jenkins',
         sender_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=256&auto=format&fit=crop',
         content: "Hello Elena! Welcome to WIPA Live Support. I'm Sarah from the Member Experience team. How can I assist you today?",
-        created_at: new Date(Date.now() - 1000 * 60 * 14).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        created_at: '12:31 PM'
       },
       {
         id: 'm3',
@@ -218,7 +220,7 @@ export default function AgentCommandCenter() {
         sender_name: 'Elena Rostova',
         sender_avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop',
         content: 'How do I connect my Google Calendar for upcoming WIPA webinars?',
-        created_at: new Date(Date.now() - 1000 * 60 * 2).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        created_at: '12:45 PM'
       }
     ]
   });
