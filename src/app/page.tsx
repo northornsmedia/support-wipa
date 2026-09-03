@@ -124,6 +124,17 @@ const CANNED_RESPONSES = [
   }
 ];
 
+const formatMessageTime = (ts?: string) => {
+  if (!ts) return 'Just now';
+  try {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return ts;
+  }
+};
+
 export default function AgentCommandCenter() {
   const [sessions, setSessions] = useState<SupportSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -228,7 +239,24 @@ export default function AgentCommandCenter() {
         const newMsg = payload.new as SupportMessage;
         setMessages(prev => {
           const list = prev[newMsg.session_id] || [];
+          // Deduplicate by ID
           if (list.some(m => m.id === newMsg.id)) return prev;
+
+          // Deduplicate by sender and content in case optimistic update had a temporary client ID
+          const optIdx = list.findIndex(m => 
+            m.sender_type === newMsg.sender_type && 
+            m.content === newMsg.content
+          );
+
+          if (optIdx !== -1) {
+            const updated = [...list];
+            updated[optIdx] = newMsg;
+            return {
+              ...prev,
+              [newMsg.session_id]: updated
+            };
+          }
+
           return {
             ...prev,
             [newMsg.session_id]: [...list, newMsg]
@@ -281,14 +309,15 @@ export default function AgentCommandCenter() {
     const content = inputMessage.trim();
     if (!content || !currentSession) return;
 
+    const msgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `agent-msg-${Date.now()}`;
     const newMsg: SupportMessage = {
-      id: `agent-msg-${Date.now()}`,
+      id: msgId,
       session_id: currentSession.id,
       sender_type: 'agent',
       sender_name: 'Sarah Jenkins',
       sender_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=256&auto=format&fit=crop',
-      content,
-      created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      content: isInternalNote ? `[INTERNAL NOTE]: ${content}` : content,
+      created_at: new Date().toISOString(),
       is_internal_note: isInternalNote
     };
 
@@ -310,9 +339,10 @@ export default function AgentCommandCenter() {
       unread_agent_count: 0
     } : s));
 
-    // Persist to Supabase
+    // Persist to Supabase with the same ID
     try {
       await supabase.from('support_messages').insert({
+        id: msgId,
         session_id: currentSession.id,
         sender_type: 'agent',
         sender_name: 'Sarah Jenkins',
@@ -753,7 +783,7 @@ export default function AgentCommandCenter() {
                               Internal Staff Whisper
                             </span>
                           )}
-                          <span className="text-[10px] text-slate-500">{msg.created_at}</span>
+                          <span className="text-[10px] text-slate-500">{formatMessageTime(msg.created_at)}</span>
                         </div>
 
                         <div className={`rounded-2xl px-4 py-3 text-xs sm:text-[13px] leading-relaxed shadow-xs whitespace-pre-line ${
