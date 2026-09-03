@@ -52,9 +52,51 @@ import {
   ChevronLeft,
   CircleDot,
   UserCheck,
+  UserPlus,
+  Users,
+  ArrowRightLeft,
   Hash
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+
+export interface AgentProfile {
+  id: string;
+  name: string;
+  role: string;
+  avatar: string;
+  email: string;
+}
+
+export const AGENT_TEAM: AgentProfile[] = [
+  {
+    id: 'sarah-jenkins',
+    name: 'Sarah Jenkins',
+    role: 'Senior Member Support Specialist',
+    avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=256&auto=format&fit=crop',
+    email: 'sarah.jenkins@womensipalliance.com'
+  },
+  {
+    id: 'alex-rivera',
+    name: 'Alex Rivera',
+    role: 'Billing & Corporate Operations Lead',
+    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop',
+    email: 'alex.rivera@womensipalliance.com'
+  },
+  {
+    id: 'priya-sharma',
+    name: 'Priya Sharma',
+    role: 'Mentorship & Legal Credentials Lead',
+    avatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=256&auto=format&fit=crop',
+    email: 'priya.sharma@womensipalliance.com'
+  },
+  {
+    id: 'marcus-vance',
+    name: 'Marcus Vance',
+    role: 'Platform Engineering & Technical Lead',
+    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=256&auto=format&fit=crop',
+    email: 'marcus.vance@womensipalliance.com'
+  }
+];
 
 interface SupportSession {
   id: string;
@@ -68,6 +110,8 @@ interface SupportSession {
   priority: 'low' | 'normal' | 'high' | 'urgent';
   category: string;
   assigned_agent_name?: string;
+  assigned_agent_avatar?: string;
+  assigned_agent_email?: string;
   last_message?: string;
   last_message_at?: string;
   unread_agent_count?: number;
@@ -139,6 +183,17 @@ export default function AgentCommandCenter() {
   const [sessions, setSessions] = useState<SupportSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, SupportMessage[]>>({});
+
+  const [currentAgent, setCurrentAgent] = useState<AgentProfile>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('wipa_active_agent_id');
+      const found = AGENT_TEAM.find(a => a.id === saved);
+      if (found) return found;
+    }
+    return AGENT_TEAM[0];
+  });
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'mine' | 'unassigned'>('all');
 
   const [inputMessage, setInputMessage] = useState('');
   const [isInternalNote, setIsInternalNote] = useState(false);
@@ -314,12 +369,17 @@ export default function AgentCommandCenter() {
       id: msgId,
       session_id: currentSession.id,
       sender_type: 'agent',
-      sender_name: 'Sarah Jenkins',
-      sender_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=256&auto=format&fit=crop',
+      sender_name: currentAgent.name,
+      sender_avatar: currentAgent.avatar,
       content: isInternalNote ? `[INTERNAL NOTE]: ${content}` : content,
       created_at: new Date().toISOString(),
       is_internal_note: isInternalNote
     };
+
+    // Auto-claim ticket if currently unassigned
+    const isCurrentlyUnassigned = !currentSession.assigned_agent_name || currentSession.assigned_agent_name === 'Unassigned';
+    const effectiveAgentName = isCurrentlyUnassigned ? currentAgent.name : currentSession.assigned_agent_name;
+    const effectiveAgentAvatar = isCurrentlyUnassigned ? currentAgent.avatar : currentSession.assigned_agent_avatar;
 
     // Optimistic UI update
     setMessages(prev => ({
@@ -331,9 +391,11 @@ export default function AgentCommandCenter() {
     setIsInternalNote(false);
     setShowMacros(false);
 
-    // Update session snippet
+    // Update session snippet & assignment
     setSessions(prev => prev.map(s => s.id === currentSession.id ? {
       ...s,
+      assigned_agent_name: effectiveAgentName,
+      assigned_agent_avatar: effectiveAgentAvatar,
       last_message: isInternalNote ? `[Note]: ${content}` : content,
       last_message_at: new Date().toISOString(),
       unread_agent_count: 0
@@ -345,13 +407,15 @@ export default function AgentCommandCenter() {
         id: msgId,
         session_id: currentSession.id,
         sender_type: 'agent',
-        sender_name: 'Sarah Jenkins',
-        sender_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=256&auto=format&fit=crop',
+        sender_name: currentAgent.name,
+        sender_avatar: currentAgent.avatar,
         content: isInternalNote ? `[INTERNAL NOTE]: ${content}` : content,
         is_read: true
       });
 
       await supabase.from('support_sessions').update({
+        assigned_agent_name: effectiveAgentName,
+        assigned_agent_avatar: effectiveAgentAvatar,
         last_message: content,
         last_message_at: new Date().toISOString(),
         unread_agent_count: 0
@@ -359,6 +423,67 @@ export default function AgentCommandCenter() {
     } catch (err) {
       console.warn('Sync error:', err);
     }
+  };
+
+  const handleClaimTicket = async () => {
+    if (!currentSession) return;
+    setSessions(prev => prev.map(s => s.id === currentSession.id ? {
+      ...s,
+      assigned_agent_name: currentAgent.name,
+      assigned_agent_avatar: currentAgent.avatar
+    } : s));
+
+    try {
+      await supabase.from('support_sessions').update({
+        assigned_agent_name: currentAgent.name,
+        assigned_agent_avatar: currentAgent.avatar
+      }).eq('id', currentSession.id);
+
+      const sysMsgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sys-${Date.now()}`;
+      await supabase.from('support_messages').insert({
+        id: sysMsgId,
+        session_id: currentSession.id,
+        sender_type: 'system',
+        sender_name: 'System',
+        content: `Ticket #${currentSession.ticket_number} claimed by ${currentAgent.name}.`
+      });
+    } catch {}
+  };
+
+  const handleReassignTicket = async (targetAgentName: string) => {
+    if (!currentSession) return;
+    const target = AGENT_TEAM.find(a => a.name === targetAgentName);
+    const newAvatar = target ? target.avatar : undefined;
+
+    setSessions(prev => prev.map(s => s.id === currentSession.id ? {
+      ...s,
+      assigned_agent_name: targetAgentName,
+      assigned_agent_avatar: newAvatar
+    } : s));
+
+    try {
+      await supabase.from('support_sessions').update({
+        assigned_agent_name: targetAgentName,
+        assigned_agent_avatar: newAvatar
+      }).eq('id', currentSession.id);
+
+      const sysMsgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sys-${Date.now()}`;
+      await supabase.from('support_messages').insert({
+        id: sysMsgId,
+        session_id: currentSession.id,
+        sender_type: 'system',
+        sender_name: 'System',
+        content: `Ticket #${currentSession.ticket_number} reassigned to ${targetAgentName} by ${currentAgent.name}.`
+      });
+    } catch {}
+  };
+
+  const handleSelectAgent = (agent: AgentProfile) => {
+    setCurrentAgent(agent);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('wipa_active_agent_id', agent.id);
+    }
+    setShowAgentPicker(false);
   };
 
   const handleApplyMacro = (macroContent: string) => {
@@ -406,13 +531,26 @@ export default function AgentCommandCenter() {
       (sess.last_message && sess.last_message.toLowerCase().includes(searchQuery.toLowerCase()));
 
     if (!matchesSearch) return false;
-    if (statusFilter === 'all') return true;
-    return sess.status === statusFilter;
+
+    // Status filter
+    if (statusFilter !== 'all' && sess.status !== statusFilter) return false;
+
+    // Assignment filter
+    if (assignmentFilter === 'mine') {
+      return sess.assigned_agent_name === currentAgent.name;
+    }
+    if (assignmentFilter === 'unassigned') {
+      return !sess.assigned_agent_name || sess.assigned_agent_name === 'Unassigned';
+    }
+
+    return true;
   });
 
   const activeCount = sessions.filter(s => s.status === 'active').length;
   const pendingCount = sessions.filter(s => s.status === 'pending').length;
   const resolvedCount = sessions.filter(s => s.status === 'resolved').length;
+  const myTicketsCount = sessions.filter(s => s.assigned_agent_name === currentAgent.name && s.status !== 'resolved').length;
+  const unassignedCount = sessions.filter(s => (!s.assigned_agent_name || s.assigned_agent_name === 'Unassigned') && s.status !== 'resolved').length;
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#070913] text-slate-100 select-none">
@@ -479,32 +617,82 @@ export default function AgentCommandCenter() {
             {soundEnabled ? <Volume2 size={17} className="text-purple-400" /> : <VolumeX size={17} />}
           </button>
 
-          {/* Agent Status Selector */}
-          <div className="flex items-center gap-2 p-1.5 rounded-xl bg-white/5 border border-white/10">
-            <div className="relative">
-              <img 
-                src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=256&auto=format&fit=crop" 
-                alt="Sarah Jenkins" 
-                className="h-7 w-7 rounded-lg object-cover ring-1 ring-purple-400" 
-              />
-              <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[#0c1020] ${
-                agentStatus === 'online' ? 'bg-emerald-500 animate-pulse' :
-                agentStatus === 'busy' ? 'bg-rose-500' : 'bg-amber-500'
-              }`} />
+          {/* Agent Switcher & Status Profile */}
+          <div className="relative">
+            <div 
+              onClick={() => setShowAgentPicker(!showAgentPicker)}
+              className="flex items-center gap-2 p-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 cursor-pointer transition-all"
+              title="Click to switch active agent"
+            >
+              <div className="relative">
+                <img 
+                  src={currentAgent.avatar} 
+                  alt={currentAgent.name} 
+                  className="h-7 w-7 rounded-lg object-cover ring-1 ring-purple-400" 
+                />
+                <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[#0c1020] ${
+                  agentStatus === 'online' ? 'bg-emerald-500 animate-pulse' :
+                  agentStatus === 'busy' ? 'bg-rose-500' : 'bg-amber-500'
+                }`} />
+              </div>
+
+              <div className="hidden sm:block text-left min-w-0 pr-1">
+                <div className="flex items-center gap-1">
+                  <p className="text-xs font-bold text-white leading-none truncate">{currentAgent.name}</p>
+                  <ChevronDown size={12} className="text-slate-400" />
+                </div>
+                <p className="text-[10px] font-semibold text-purple-400 truncate">{currentAgent.role.split(' ')[0]} Specialist</p>
+              </div>
             </div>
 
-            <div className="hidden sm:block text-left min-w-0 pr-1">
-              <p className="text-xs font-bold text-white leading-none truncate">Sarah Jenkins</p>
-              <select
-                value={agentStatus}
-                onChange={(e) => setAgentStatus(e.target.value as any)}
-                className="bg-transparent text-[10px] font-semibold text-purple-400 focus:outline-hidden cursor-pointer"
-              >
-                <option value="online" className="bg-slate-900 text-emerald-400">● Online</option>
-                <option value="busy" className="bg-slate-900 text-rose-400">● In Call / Busy</option>
-                <option value="away" className="bg-slate-900 text-amber-400">● Away</option>
-              </select>
-            </div>
+            {/* Agent Switcher Modal Popup */}
+            {showAgentPicker && (
+              <div className="absolute right-0 top-12 z-50 w-72 rounded-2xl bg-[#0d1224] border border-purple-500/30 p-3 shadow-2xl space-y-2 backdrop-blur-xl">
+                <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Users size={13} className="text-purple-400" /> Support Team Roster
+                  </span>
+                  <span className="text-[10px] text-slate-400">Switch Agent</span>
+                </div>
+
+                <div className="space-y-1">
+                  {AGENT_TEAM.map((agent) => {
+                    const isCurrent = agent.id === currentAgent.id;
+                    return (
+                      <div
+                        key={agent.id}
+                        onClick={() => handleSelectAgent(agent)}
+                        className={`flex items-center gap-2.5 p-2 rounded-xl transition-all cursor-pointer ${
+                          isCurrent ? 'bg-purple-950/80 border border-purple-600/50' : 'hover:bg-white/5 border border-transparent'
+                        }`}
+                      >
+                        <img src={agent.avatar} alt={agent.name} className="h-8 w-8 rounded-lg object-cover ring-1 ring-white/10" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold text-white flex items-center justify-between">
+                            <span>{agent.name}</span>
+                            {isCurrent && <span className="text-[9px] text-purple-300 font-bold bg-purple-900/60 px-1.5 py-0.2 rounded">Active</span>}
+                          </p>
+                          <p className="text-[10px] text-slate-400 truncate">{agent.role}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px]">
+                  <span className="text-slate-400">Status:</span>
+                  <select
+                    value={agentStatus}
+                    onChange={(e) => setAgentStatus(e.target.value as any)}
+                    className="bg-slate-900 text-purple-300 rounded-lg px-2 py-1 text-xs border border-white/10 focus:outline-hidden cursor-pointer"
+                  >
+                    <option value="online">● Online</option>
+                    <option value="busy">● In Call / Busy</option>
+                    <option value="away">● Away</option>
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Mobile Right Drawer Button */}
@@ -537,6 +725,37 @@ export default function AgentCommandCenter() {
               />
             </div>
 
+            {/* Assignment Filter Pills */}
+            <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-white/5 text-[10px] font-bold text-slate-400">
+              <button
+                type="button"
+                onClick={() => setAssignmentFilter('all')}
+                className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
+                  assignmentFilter === 'all' ? 'bg-white/15 text-white shadow-xs' : 'hover:text-white'
+                }`}
+              >
+                All ({activeCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setAssignmentFilter('mine')}
+                className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
+                  assignmentFilter === 'mine' ? 'bg-[#5a32fa] text-white shadow-xs' : 'hover:text-white'
+                }`}
+              >
+                My Chats ({myTicketsCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setAssignmentFilter('unassigned')}
+                className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
+                  assignmentFilter === 'unassigned' ? 'bg-amber-900/60 text-amber-300 shadow-xs' : 'hover:text-white'
+                }`}
+              >
+                Unassigned ({unassignedCount})
+              </button>
+            </div>
+
             {/* Status Filter Tabs */}
             <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-white/5 text-[11px] font-bold text-slate-400">
               <button
@@ -546,7 +765,7 @@ export default function AgentCommandCenter() {
                   statusFilter === 'active' ? 'bg-[#5a32fa] text-white shadow-xs' : 'hover:text-white'
                 }`}
               >
-                Active ({activeCount})
+                Active
               </button>
               <button
                 type="button"
@@ -643,14 +862,27 @@ export default function AgentCommandCenter() {
                       {sess.last_message || 'New session initiated...'}
                     </p>
 
-                    {/* Meta footer */}
-                    <div className="flex items-center justify-between pl-10 text-[10px] text-slate-500">
-                      <span className="inline-flex items-center gap-1 font-semibold text-purple-400/90">
-                        <Tag size={10} /> {sess.category || 'General'}
-                      </span>
-                      <span>
+                    {/* Meta footer with Assignment Badge */}
+                    <div className="flex items-center justify-between pl-10 text-[10px]">
+                      <div>
+                        {!sess.assigned_agent_name || sess.assigned_agent_name === 'Unassigned' ? (
+                          <span className="text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-800/60 px-1.5 py-0.5 rounded">
+                            Unassigned
+                          </span>
+                        ) : sess.assigned_agent_name === currentAgent.name ? (
+                          <span className="text-[9px] font-bold text-purple-300 bg-purple-950/80 border border-purple-800/60 px-1.5 py-0.5 rounded">
+                            You
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-medium text-slate-300 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded">
+                            {sess.assigned_agent_name.split(' ')[0]}
+                          </span>
+                        )}
+                      </div>
+
+                      <span className="text-slate-500">
                         {sess.last_message_at 
-                          ? new Date(sess.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                          ? formatMessageTime(sess.last_message_at) 
                           : 'Just now'}
                       </span>
                     </div>
@@ -685,11 +917,53 @@ export default function AgentCommandCenter() {
                         {currentSession.status}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400 truncate flex items-center gap-2">
-                      <span>{currentSession.user_email || 'Member on Web'}</span>
-                      <span className="text-slate-600">•</span>
-                      <span className="text-emerald-400">Response target: &lt; 2m</span>
-                    </p>
+
+                    {/* Assignment Status & Quick Transfer */}
+                    <div className="flex items-center gap-2 mt-1">
+                      {!currentSession.assigned_agent_name || currentSession.assigned_agent_name === 'Unassigned' ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded-md border border-amber-800/60">
+                            Unassigned
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleClaimTicket}
+                            className="px-2.5 py-0.5 rounded-md text-[11px] font-bold text-white bg-gradient-to-r from-[#5a32fa] to-[#7c3aed] hover:from-[#4b26dc] hover:to-[#6d28d9] flex items-center gap-1 cursor-pointer transition-all shadow-xs"
+                          >
+                            <UserPlus size={11} />
+                            <span>Claim Ticket</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-slate-400">Assigned:</span>
+                          <span className="text-[11px] font-bold text-white flex items-center gap-1">
+                            {currentSession.assigned_agent_name === currentAgent.name ? (
+                              <span className="text-purple-300">You ({currentAgent.name})</span>
+                            ) : (
+                              currentSession.assigned_agent_name
+                            )}
+                          </span>
+                          
+                          {/* Reassign dropdown */}
+                          <div className="relative ml-2">
+                            <select
+                              value={currentSession.assigned_agent_name}
+                              onChange={(e) => handleReassignTicket(e.target.value)}
+                              className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-2 py-0.5 text-[10px] font-bold text-purple-300 cursor-pointer focus:outline-hidden"
+                            >
+                              <option disabled value="">Reassign...</option>
+                              {AGENT_TEAM.map(a => (
+                                <option key={a.id} value={a.name} className="bg-slate-900 text-white">
+                                  Assign to {a.name}
+                                </option>
+                              ))}
+                              <option value="Unassigned" className="bg-slate-900 text-amber-400">Mark Unassigned</option>
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
