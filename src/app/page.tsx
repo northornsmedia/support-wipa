@@ -533,7 +533,11 @@ export default function AgentCommandCenter() {
     if (!matchesSearch) return false;
 
     // Status filter
-    if (statusFilter !== 'all' && sess.status !== statusFilter) return false;
+    if (statusFilter === 'resolved') {
+      if (sess.status !== 'resolved' && sess.status !== 'closed') return false;
+    } else if (statusFilter !== 'all' && sess.status !== statusFilter) {
+      return false;
+    }
 
     // Assignment filter
     if (assignmentFilter === 'mine') {
@@ -548,9 +552,9 @@ export default function AgentCommandCenter() {
 
   const activeCount = sessions.filter(s => s.status === 'active').length;
   const pendingCount = sessions.filter(s => s.status === 'pending').length;
-  const resolvedCount = sessions.filter(s => s.status === 'resolved').length;
-  const myTicketsCount = sessions.filter(s => s.assigned_agent_name === currentAgent.name && s.status !== 'resolved').length;
-  const unassignedCount = sessions.filter(s => (!s.assigned_agent_name || s.assigned_agent_name === 'Unassigned') && s.status !== 'resolved').length;
+  const resolvedCount = sessions.filter(s => s.status === 'resolved' || s.status === 'closed').length;
+  const myTicketsCount = sessions.filter(s => s.assigned_agent_name === currentAgent.name && s.status !== 'resolved' && s.status !== 'closed').length;
+  const unassignedCount = sessions.filter(s => (!s.assigned_agent_name || s.assigned_agent_name === 'Unassigned') && s.status !== 'resolved' && s.status !== 'closed').length;
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#070913] text-slate-100 select-none">
