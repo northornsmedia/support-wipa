@@ -124,106 +124,10 @@ const CANNED_RESPONSES = [
   }
 ];
 
-const INITIAL_FALLBACK_SESSIONS: SupportSession[] = [
-  {
-    id: 'demo-session-1',
-    ticket_number: 'WIP-8942',
-    user_name: 'Elena Rostova',
-    user_email: 'elena.rostova@techlaw.co.uk',
-    user_avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop',
-    user_tier: 'Corporate Executive',
-    status: 'active',
-    priority: 'high',
-    category: 'Calendar',
-    assigned_agent_name: 'Sarah Jenkins',
-    last_message: 'How do I connect my Google Calendar for upcoming WIPA webinars?',
-    last_message_at: '2026-09-03T12:45:00.000Z',
-    unread_agent_count: 1,
-    created_at: '2026-09-03T12:30:00.000Z'
-  },
-  {
-    id: 'demo-session-2',
-    ticket_number: 'WIP-8943',
-    user_name: 'David Chen',
-    user_email: 'd.chen@biopatents.org',
-    user_avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=256&auto=format&fit=crop',
-    user_tier: 'Verified Member',
-    status: 'active',
-    priority: 'normal',
-    category: 'Billing',
-    assigned_agent_name: 'Sarah Jenkins',
-    last_message: 'Need a copy of last month invoice with firm VAT number',
-    last_message_at: '2026-09-03T12:35:00.000Z',
-    unread_agent_count: 0,
-    created_at: '2026-09-03T12:00:00.000Z'
-  },
-  {
-    id: 'demo-session-3',
-    ticket_number: 'WIP-8939',
-    user_name: 'Sophie Laurent',
-    user_email: 'sophie@laurent-ip.eu',
-    user_avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=256&auto=format&fit=crop',
-    user_tier: 'Pro Partner',
-    status: 'pending',
-    priority: 'normal',
-    category: 'Mentorship',
-    assigned_agent_name: 'Sarah Jenkins',
-    last_message: 'Thank you Sarah, I submitted the mentor application form.',
-    last_message_at: '2026-09-03T10:30:00.000Z',
-    unread_agent_count: 0,
-    created_at: '2026-09-03T09:30:00.000Z'
-  },
-  {
-    id: 'demo-session-4',
-    ticket_number: 'WIP-8930',
-    user_name: 'Kwame Osei',
-    user_email: 'k.osei@ipblockchain.africa',
-    user_avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=256&auto=format&fit=crop',
-    user_tier: 'Verified Member',
-    status: 'resolved',
-    priority: 'low',
-    category: 'General',
-    assigned_agent_name: 'Sarah Jenkins',
-    last_message: 'Resolved: Profile badge update confirmed.',
-    last_message_at: '2026-09-02T12:00:00.000Z',
-    unread_agent_count: 0,
-    created_at: '2026-09-02T10:00:00.000Z'
-  }
-];
-
 export default function AgentCommandCenter() {
-  const [sessions, setSessions] = useState<SupportSession[]>(INITIAL_FALLBACK_SESSIONS);
-  const [selectedSessionId, setSelectedSessionId] = useState<string>('demo-session-1');
-  const [messages, setMessages] = useState<Record<string, SupportMessage[]>>({
-    'demo-session-1': [
-      {
-        id: 'm1',
-        session_id: 'demo-session-1',
-        sender_type: 'system',
-        sender_name: 'System',
-        content: 'Session initiated via WIPA Member Portal (/platform/chat-support). Priority: Pro SLA.',
-        created_at: '12:30 PM'
-      },
-      {
-        id: 'm2',
-        session_id: 'demo-session-1',
-        sender_type: 'agent',
-        sender_name: 'Sarah Jenkins',
-        sender_avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=256&auto=format&fit=crop',
-        content: "Hello Elena! Welcome to WIPA Live Support. I'm Sarah from the Member Experience team. How can I assist you today?",
-        created_at: '12:31 PM'
-      },
-      {
-        id: 'm3',
-        session_id: 'demo-session-1',
-        sender_type: 'user',
-        sender_name: 'Elena Rostova',
-        sender_avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop',
-        content: 'How do I connect my Google Calendar for upcoming WIPA webinars?',
-        created_at: '12:45 PM'
-      }
-    ]
-  });
+  const [sessions, setSessions] = useState<SupportSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Record<string, SupportMessage[]>>({});
 
   const [inputMessage, setInputMessage] = useState('');
   const [isInternalNote, setIsInternalNote] = useState(false);
@@ -266,28 +170,33 @@ export default function AgentCommandCenter() {
         const { data: dbSessions, error: sessError } = await supabase
           .from('support_sessions')
           .select('*')
+          .neq('last_message', 'Session initiated')
           .order('last_message_at', { ascending: false });
 
-        if (!sessError && dbSessions && dbSessions.length > 0) {
+        if (!sessError && dbSessions) {
           setSessions(dbSessions as SupportSession[]);
-          setSelectedSessionId(dbSessions[0].id);
+          if (dbSessions.length > 0) {
+            setSelectedSessionId(dbSessions[0].id);
 
-          // Fetch messages for the first session
-          const { data: dbMessages } = await supabase
-            .from('support_messages')
-            .select('*')
-            .eq('session_id', dbSessions[0].id)
-            .order('created_at', { ascending: true });
+            // Fetch messages for the first session
+            const { data: dbMessages } = await supabase
+              .from('support_messages')
+              .select('*')
+              .eq('session_id', dbSessions[0].id)
+              .order('created_at', { ascending: true });
 
-          if (dbMessages) {
-            setMessages(prev => ({
-              ...prev,
-              [dbSessions[0].id]: dbMessages as SupportMessage[]
-            }));
+            if (dbMessages) {
+              setMessages(prev => ({
+                ...prev,
+                [dbSessions[0].id]: dbMessages as SupportMessage[]
+              }));
+            }
+          } else {
+            setSelectedSessionId(null);
           }
         }
       } catch (err) {
-        console.warn('Using initial session state:', err);
+        console.warn('Error fetching support sessions:', err);
       }
     };
 
@@ -296,11 +205,23 @@ export default function AgentCommandCenter() {
     // Supabase Realtime subscriptions for support_sessions and support_messages
     const channel = supabase.channel('support-agent-global')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'support_sessions' }, (payload: any) => {
+        const item = payload.new as SupportSession;
+        if (item && item.last_message === 'Session initiated') return;
+
         if (payload.eventType === 'INSERT') {
-          setSessions(prev => [payload.new as SupportSession, ...prev]);
+          setSessions(prev => [item, ...prev.filter(s => s.id !== item.id)]);
+          setSelectedSessionId(prev => prev || item.id);
           playAlert();
         } else if (payload.eventType === 'UPDATE') {
-          setSessions(prev => prev.map(s => s.id === payload.new.id ? { ...s, ...payload.new } : s));
+          setSessions(prev => {
+            const exists = prev.some(s => s.id === item.id);
+            if (exists) {
+              return prev.map(s => s.id === item.id ? { ...s, ...item } : s);
+            }
+            return [item, ...prev];
+          });
+        } else if (payload.eventType === 'DELETE') {
+          setSessions(prev => prev.filter(s => s.id !== payload.old.id));
         }
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'support_messages' }, (payload: any) => {
@@ -352,7 +273,7 @@ export default function AgentCommandCenter() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, selectedSessionId]);
 
-  const currentSession = sessions.find(s => s.id === selectedSessionId) || sessions[0];
+  const currentSession = selectedSessionId ? (sessions.find(s => s.id === selectedSessionId) || null) : null;
   const activeMessages = (currentSession ? messages[currentSession.id] : []) || [];
 
   const handleSendMessage = async (e?: React.FormEvent) => {
@@ -975,10 +896,26 @@ export default function AgentCommandCenter() {
               </div>
             </>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-500 space-y-3 p-6 text-center">
-              <Headphones size={48} className="text-purple-400/50" />
-              <h3 className="text-base font-bold text-white">No active conversation selected</h3>
-              <p className="text-xs max-w-sm text-slate-400">Select an incoming support session from the queue on the left to begin replying.</p>
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-500 space-y-4 p-8 text-center">
+              <div className="relative">
+                <div className="h-16 w-16 rounded-3xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 shadow-xl shadow-purple-500/10">
+                  <Radio size={32} className="animate-pulse text-[#5a32fa] dark:text-purple-400" />
+                </div>
+                <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                </span>
+              </div>
+              <div className="space-y-1.5 max-w-sm">
+                <h3 className="text-base font-bold text-white">Agent Standby • Ready for Chats</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Listening for incoming member support messages. As soon as a user sends their first message in live chat, it will appear in the queue on the left.
+                </p>
+              </div>
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/5 border border-white/10 text-[11px] text-emerald-400 font-mono">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                Realtime WebSocket: Connected (24/7)
+              </div>
             </div>
           )}
 
@@ -1001,7 +938,7 @@ export default function AgentCommandCenter() {
             </button>
           </div>
 
-          {currentSession && (
+          {currentSession ? (
             <div className="p-4 space-y-4">
               
               {/* Profile Card */}
@@ -1083,6 +1020,12 @@ export default function AgentCommandCenter() {
                 </div>
               </div>
 
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-500 space-y-2 my-auto">
+              <UserCheck size={32} className="mx-auto text-slate-600 opacity-60" />
+              <p className="text-xs font-semibold text-slate-400">No member selected</p>
+              <p className="text-[11px] text-slate-600">Member profile and practice details will display here when a session is active.</p>
             </div>
           )}
         </aside>
