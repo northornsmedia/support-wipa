@@ -403,6 +403,17 @@ export default function AgentCommandCenter() {
 
     // Persist to Supabase with the same ID
     try {
+      if (isCurrentlyUnassigned) {
+        const joinMsgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sys-${Date.now()}`;
+        await supabase.from('support_messages').insert({
+          id: joinMsgId,
+          session_id: currentSession.id,
+          sender_type: 'system',
+          sender_name: 'System',
+          content: `👋 ${currentAgent.name} has joined the chat and is here to help you.`
+        });
+      }
+
       await supabase.from('support_messages').insert({
         id: msgId,
         session_id: currentSession.id,
@@ -445,7 +456,7 @@ export default function AgentCommandCenter() {
         session_id: currentSession.id,
         sender_type: 'system',
         sender_name: 'System',
-        content: `Ticket #${currentSession.ticket_number} claimed by ${currentAgent.name}.`
+        content: `👋 ${currentAgent.name} has joined the chat and is here to help you.`
       });
     } catch {}
   };
