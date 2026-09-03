@@ -6,15 +6,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Headphones, 
   Send, 
-  Paperclip, 
   Sparkles, 
-  CheckCheck, 
   Clock, 
   Phone, 
   Mail, 
-  HelpCircle, 
-  ExternalLink, 
-  ChevronRight, 
   ChevronDown, 
   RefreshCw, 
   X, 
@@ -24,43 +19,21 @@ import {
   VolumeX, 
   ShieldCheck, 
   User, 
-  MessageSquare, 
-  ArrowRight,
-  Info,
-  Calendar,
-  CreditCard,
-  GraduationCap,
-  Building2,
-  Bug,
-  Smile,
-  FileText,
-  AlertCircle,
-  Search,
-  Filter,
-  CheckCircle2,
-  Lock,
-  Globe,
-  Radio,
-  BarChart3,
-  Flame,
-  Zap,
-  Tag,
-  CornerDownRight,
-  StickyNote,
-  MoreVertical,
-  SlidersHorizontal,
-  ChevronLeft,
-  CircleDot,
-  UserCheck,
-  UserPlus,
-  Users,
-  ArrowRightLeft,
-  Hash
+  Search, 
+  CheckCircle2, 
+  Lock, 
+  Tag, 
+  StickyNote, 
+  UserPlus, 
+  Users, 
+  LogOut,
+  ArrowRight
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 export interface AgentProfile {
   id: string;
+  username?: string;
   name: string;
   role: string;
   avatar: string;
@@ -70,6 +43,7 @@ export interface AgentProfile {
 export const AGENT_TEAM: AgentProfile[] = [
   {
     id: 'sarah-jenkins',
+    username: 'sarah.jenkins',
     name: 'Sarah Jenkins',
     role: 'Senior Member Support Specialist',
     avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=256&auto=format&fit=crop',
@@ -77,6 +51,7 @@ export const AGENT_TEAM: AgentProfile[] = [
   },
   {
     id: 'alex-rivera',
+    username: 'alex.rivera',
     name: 'Alex Rivera',
     role: 'Billing & Corporate Operations Lead',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop',
@@ -84,6 +59,7 @@ export const AGENT_TEAM: AgentProfile[] = [
   },
   {
     id: 'priya-sharma',
+    username: 'priya.sharma',
     name: 'Priya Sharma',
     role: 'Mentorship & Legal Credentials Lead',
     avatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?q=80&w=256&auto=format&fit=crop',
@@ -91,6 +67,7 @@ export const AGENT_TEAM: AgentProfile[] = [
   },
   {
     id: 'marcus-vance',
+    username: 'marcus.vance',
     name: 'Marcus Vance',
     role: 'Platform Engineering & Technical Lead',
     avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=256&auto=format&fit=crop',
@@ -184,14 +161,7 @@ export default function AgentCommandCenter() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, SupportMessage[]>>({});
 
-  const [currentAgent, setCurrentAgent] = useState<AgentProfile>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('wipa_active_agent_id');
-      const found = AGENT_TEAM.find(a => a.id === saved);
-      if (found) return found;
-    }
-    return AGENT_TEAM[0];
-  });
+  const [currentAgent, setCurrentAgent] = useState<AgentProfile>(AGENT_TEAM[0]);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'mine' | 'unassigned'>('all');
 
@@ -207,6 +177,31 @@ export default function AgentCommandCenter() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  // Authenticate on mount via Server Auth API
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(res => res.json())
+      .then(data => {
+        if (data.authenticated && data.agent) {
+          setCurrentAgent(data.agent);
+        } else {
+          window.location.href = '/login';
+        }
+      })
+      .catch(() => {
+        window.location.href = '/login';
+      });
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/login';
+    } catch {
+      window.location.href = '/login';
+    }
+  };
 
   // Play audio alert on new member message
   const playAlert = () => {
@@ -268,53 +263,44 @@ export default function AgentCommandCenter() {
 
     fetchSupabaseData();
 
-    // Supabase Realtime subscriptions for support_sessions and support_messages
-    const channel = supabase.channel('support-agent-global')
+    // Supabase Realtime for Sessions & Messages
+    const sessionChannel = supabase
+      .channel('agent-sessions-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'support_sessions' }, (payload: any) => {
-        const item = payload.new as SupportSession;
-        if (item && item.last_message === 'Session initiated') return;
-
         if (payload.eventType === 'INSERT') {
-          setSessions(prev => [item, ...prev.filter(s => s.id !== item.id)]);
-          setSelectedSessionId(prev => prev || item.id);
+          const newSess = payload.new as SupportSession;
+          if (newSess.last_message === 'Session initiated') return;
+          setSessions(prev => [newSess, ...prev.filter(s => s.id !== newSess.id)]);
           playAlert();
         } else if (payload.eventType === 'UPDATE') {
-          setSessions(prev => {
-            const exists = prev.some(s => s.id === item.id);
-            if (exists) {
-              return prev.map(s => s.id === item.id ? { ...s, ...item } : s);
-            }
-            return [item, ...prev];
-          });
+          const updatedSess = payload.new as SupportSession;
+          setSessions(prev => prev.map(s => s.id === updatedSess.id ? updatedSess : s));
         } else if (payload.eventType === 'DELETE') {
           setSessions(prev => prev.filter(s => s.id !== payload.old.id));
         }
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'support_messages' }, (payload: any) => {
         const newMsg = payload.new as SupportMessage;
+        
         setMessages(prev => {
-          const list = prev[newMsg.session_id] || [];
-          // Deduplicate by ID
-          if (list.some(m => m.id === newMsg.id)) return prev;
-
-          // Deduplicate by sender and content in case optimistic update had a temporary client ID
-          const optIdx = list.findIndex(m => 
-            m.sender_type === newMsg.sender_type && 
-            m.content === newMsg.content
-          );
-
-          if (optIdx !== -1) {
-            const updated = [...list];
-            updated[optIdx] = newMsg;
-            return {
-              ...prev,
-              [newMsg.session_id]: updated
-            };
+          const existingList = prev[newMsg.session_id] || [];
+          if (existingList.some(m => m.id === newMsg.id)) {
+            return prev;
+          }
+          if (newMsg.sender_type === 'agent') {
+            const dupIndex = existingList.findIndex(
+              m => m.sender_type === 'agent' && m.content === newMsg.content && Math.abs(new Date(m.created_at || '').getTime() - new Date(newMsg.created_at || '').getTime()) < 3000
+            );
+            if (dupIndex !== -1) {
+              const copy = [...existingList];
+              copy[dupIndex] = newMsg;
+              return { ...prev, [newMsg.session_id]: copy };
+            }
           }
 
           return {
             ...prev,
-            [newMsg.session_id]: [...list, newMsg]
+            [newMsg.session_id]: [...existingList, newMsg]
           };
         });
 
@@ -325,28 +311,29 @@ export default function AgentCommandCenter() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(sessionChannel);
     };
   }, []);
 
-  // Fetch messages when changing selected session
+  // Fetch messages when switching session
   useEffect(() => {
     if (!selectedSessionId) return;
-    const loadSessionMessages = async () => {
-      try {
-        const { data: dbMessages } = await supabase
-          .from('support_messages')
-          .select('*')
-          .eq('session_id', selectedSessionId)
-          .order('created_at', { ascending: true });
 
-        if (dbMessages && dbMessages.length > 0) {
-          setMessages(prev => ({
-            ...prev,
-            [selectedSessionId]: dbMessages as SupportMessage[]
-          }));
-        }
-      } catch (e) {}
+    const loadSessionMessages = async () => {
+      if (messages[selectedSessionId] && messages[selectedSessionId].length > 0) return;
+
+      const { data: dbMessages } = await supabase
+        .from('support_messages')
+        .select('*')
+        .eq('session_id', selectedSessionId)
+        .order('created_at', { ascending: true });
+
+      if (dbMessages) {
+        setMessages(prev => ({
+          ...prev,
+          [selectedSessionId]: dbMessages as SupportMessage[]
+        }));
+      }
     };
 
     loadSessionMessages();
@@ -491,47 +478,36 @@ export default function AgentCommandCenter() {
 
   const handleSelectAgent = (agent: AgentProfile) => {
     setCurrentAgent(agent);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('wipa_active_agent_id', agent.id);
-    }
     setShowAgentPicker(false);
   };
 
   const handleApplyMacro = (macroContent: string) => {
     const formatted = macroContent.replace('{TICKET}', currentSession?.ticket_number || 'WIP-8942');
     setInputMessage(prev => prev ? `${prev}\n\n${formatted}` : formatted);
-    setShowMacros(false);
-    composerRef.current?.focus();
   };
 
   const handleUpdateStatus = async (newStatus: 'active' | 'pending' | 'resolved' | 'closed') => {
     if (!currentSession) return;
-    setSessions(prev => prev.map(s => s.id === currentSession.id ? { ...s, status: newStatus } : s));
-    
-    // Add system notification message
-    const sysMsg: SupportMessage = {
-      id: `sys-${Date.now()}`,
-      session_id: currentSession.id,
-      sender_type: 'system',
-      sender_name: 'System',
-      content: `Ticket status updated to: ${newStatus.toUpperCase()} by Sarah Jenkins.`,
-      created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
 
-    setMessages(prev => ({
-      ...prev,
-      [currentSession.id]: [...(prev[currentSession.id] || []), sysMsg]
-    }));
+    setSessions(prev => prev.map(s => s.id === currentSession.id ? { ...s, status: newStatus } : s));
 
     try {
-      await supabase.from('support_sessions').update({ status: newStatus }).eq('id', currentSession.id);
+      await supabase
+        .from('support_sessions')
+        .update({ status: newStatus })
+        .eq('id', currentSession.id);
+
+      const sysMsgId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sys-${Date.now()}`;
       await supabase.from('support_messages').insert({
+        id: sysMsgId,
         session_id: currentSession.id,
         sender_type: 'system',
         sender_name: 'System',
-        content: `Ticket status updated to: ${newStatus.toUpperCase()}`
+        content: `Ticket #${currentSession.ticket_number} marked as ${newStatus.toUpperCase()} by ${currentAgent.name}.`
       });
-    } catch {}
+    } catch (err) {
+      console.warn('Status update error:', err);
+    }
   };
 
   const filteredSessions = sessions.filter(sess => {
@@ -568,54 +544,54 @@ export default function AgentCommandCenter() {
   const unassignedCount = sessions.filter(s => (!s.assigned_agent_name || s.assigned_agent_name === 'Unassigned') && s.status !== 'resolved' && s.status !== 'closed').length;
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#070913] text-slate-100 select-none">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f8fafc] text-slate-900 select-none font-sans">
       
-      {/* 1. TOP GLOBAL COMMAND BAR */}
-      <header className="shrink-0 h-16 border-b border-white/10 bg-[#0c1020]/95 backdrop-blur-xl px-4 sm:px-6 flex items-center justify-between z-30 shadow-xs">
+      {/* 1. TOP GLOBAL COMMAND BAR (WHITE MODE) */}
+      <header className="shrink-0 h-16 border-b border-slate-200/90 bg-white/95 backdrop-blur-xl px-4 sm:px-6 flex items-center justify-between z-30 shadow-2xs">
         
         {/* Left branding & Domain Context */}
         <div className="flex items-center gap-3 min-w-0">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#5a32fa] via-[#7c3aed] to-[#ff2a5f] p-0.5 shadow-md shadow-purple-500/25">
-            <div className="h-full w-full rounded-[10px] bg-[#0c1020] flex items-center justify-center text-white">
-              <Headphones size={18} className="text-purple-400" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#5a32fa] via-[#7c3aed] to-[#ff2a5f] p-0.5 shadow-md shadow-purple-500/20">
+            <div className="h-full w-full rounded-[10px] bg-white flex items-center justify-center">
+              <Headphones size={18} className="text-[#5a32fa]" />
             </div>
           </div>
 
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-white tracking-tight">
+              <span className="text-sm font-bold text-slate-900 tracking-tight">
                 WIPA Support Global Console
               </span>
-              <span className="hidden md:inline-flex items-center gap-1 text-[11px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-800/60">
+              <span className="hidden md:inline-flex items-center gap-1 text-[11px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                 <Lock size={10} />
                 supportglobal.womensipalliance.com
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 truncate flex items-center gap-2">
+            <p className="text-[11px] text-slate-500 truncate flex items-center gap-2">
               <span>Agent Workspace v2.4</span>
-              <span className="text-slate-600">•</span>
-              <span className="text-purple-400">Live WebSockets Active</span>
+              <span className="text-slate-300">•</span>
+              <span className="text-[#5a32fa] font-medium">Live WebSockets Active</span>
             </p>
           </div>
         </div>
 
         {/* Center KPI Stats Bar (Desktop) */}
-        <div className="hidden xl:flex items-center gap-6 px-4 py-1.5 rounded-2xl bg-white/5 border border-white/5 text-xs">
+        <div className="hidden xl:flex items-center gap-6 px-4 py-1.5 rounded-2xl bg-slate-100 border border-slate-200 text-xs">
           <div className="flex items-center gap-2">
-            <span className="text-slate-400">Queue:</span>
-            <span className="font-bold text-white px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-mono">
+            <span className="text-slate-500">Queue:</span>
+            <span className="font-bold text-[#5a32fa] px-2 py-0.5 rounded-md bg-purple-100 font-mono">
               {activeCount} active
             </span>
           </div>
-          <div className="h-3 w-[1px] bg-white/10" />
+          <div className="h-3 w-[1px] bg-slate-200" />
           <div className="flex items-center gap-2">
-            <span className="text-slate-400">Avg First Response:</span>
-            <span className="font-bold text-emerald-400 font-mono">38s</span>
+            <span className="text-slate-500">Avg First Response:</span>
+            <span className="font-bold text-emerald-600 font-mono">38s</span>
           </div>
-          <div className="h-3 w-[1px] bg-white/10" />
+          <div className="h-3 w-[1px] bg-slate-200" />
           <div className="flex items-center gap-2">
-            <span className="text-slate-400">Today Resolution:</span>
-            <span className="font-bold text-white font-mono">98.6%</span>
+            <span className="text-slate-500">Today Resolution:</span>
+            <span className="font-bold text-slate-800 font-mono">98.6%</span>
           </div>
         </div>
 
@@ -626,26 +602,26 @@ export default function AgentCommandCenter() {
           <button
             type="button"
             onClick={() => setSoundEnabled(!soundEnabled)}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
             title={soundEnabled ? 'Mute notification chimes' : 'Unmute notification chimes'}
           >
-            {soundEnabled ? <Volume2 size={17} className="text-purple-400" /> : <VolumeX size={17} />}
+            {soundEnabled ? <Volume2 size={17} className="text-[#5a32fa]" /> : <VolumeX size={17} />}
           </button>
 
           {/* Agent Switcher & Status Profile */}
           <div className="relative">
             <div 
               onClick={() => setShowAgentPicker(!showAgentPicker)}
-              className="flex items-center gap-2 p-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 cursor-pointer transition-all"
-              title="Click to switch active agent"
+              className="flex items-center gap-2 p-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 cursor-pointer transition-all shadow-2xs"
+              title="Click to switch active agent account"
             >
               <div className="relative">
                 <img 
                   src={currentAgent.avatar} 
                   alt={currentAgent.name} 
-                  className="h-7 w-7 rounded-lg object-cover ring-1 ring-purple-400" 
+                  className="h-7 w-7 rounded-lg object-cover ring-1 ring-purple-300" 
                 />
-                <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[#0c1020] ${
+                <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${
                   agentStatus === 'online' ? 'bg-emerald-500 animate-pulse' :
                   agentStatus === 'busy' ? 'bg-rose-500' : 'bg-amber-500'
                 }`} />
@@ -653,53 +629,53 @@ export default function AgentCommandCenter() {
 
               <div className="hidden sm:block text-left min-w-0 pr-1">
                 <div className="flex items-center gap-1">
-                  <p className="text-xs font-bold text-white leading-none truncate">{currentAgent.name}</p>
+                  <p className="text-xs font-bold text-slate-900 leading-none truncate">{currentAgent.name}</p>
                   <ChevronDown size={12} className="text-slate-400" />
                 </div>
-                <p className="text-[10px] font-semibold text-purple-400 truncate">{currentAgent.role.split(' ')[0]} Specialist</p>
+                <p className="text-[10px] font-semibold text-[#5a32fa] truncate">{currentAgent.role.split(' ')[0]} Specialist</p>
               </div>
             </div>
 
-            {/* Agent Switcher Modal Popup */}
+            {/* Agent Switcher Dropdown Modal */}
             {showAgentPicker && (
-              <div className="absolute right-0 top-12 z-50 w-72 rounded-2xl bg-[#0d1224] border border-purple-500/30 p-3 shadow-2xl space-y-2 backdrop-blur-xl">
-                <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                    <Users size={13} className="text-purple-400" /> Support Team Roster
+              <div className="absolute right-0 top-12 z-50 w-72 rounded-2xl bg-white border border-slate-200 p-3 shadow-2xl space-y-2">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <Users size={13} className="text-[#5a32fa]" /> Support Team Roster
                   </span>
                   <span className="text-[10px] text-slate-400">Switch Agent</span>
                 </div>
 
                 <div className="space-y-1">
                   {AGENT_TEAM.map((agent) => {
-                    const isCurrent = agent.id === currentAgent.id;
+                    const isCurrent = agent.id === currentAgent.id || agent.name === currentAgent.name;
                     return (
                       <div
                         key={agent.id}
                         onClick={() => handleSelectAgent(agent)}
                         className={`flex items-center gap-2.5 p-2 rounded-xl transition-all cursor-pointer ${
-                          isCurrent ? 'bg-purple-950/80 border border-purple-600/50' : 'hover:bg-white/5 border border-transparent'
+                          isCurrent ? 'bg-purple-50 border border-purple-300' : 'hover:bg-slate-50 border border-transparent'
                         }`}
                       >
-                        <img src={agent.avatar} alt={agent.name} className="h-8 w-8 rounded-lg object-cover ring-1 ring-white/10" />
+                        <img src={agent.avatar} alt={agent.name} className="h-8 w-8 rounded-lg object-cover ring-1 ring-slate-200" />
                         <div className="min-w-0 flex-1">
-                          <p className="text-xs font-bold text-white flex items-center justify-between">
+                          <p className="text-xs font-bold text-slate-900 flex items-center justify-between">
                             <span>{agent.name}</span>
-                            {isCurrent && <span className="text-[9px] text-purple-300 font-bold bg-purple-900/60 px-1.5 py-0.2 rounded">Active</span>}
+                            {isCurrent && <span className="text-[9px] text-[#5a32fa] font-bold bg-purple-100 px-1.5 py-0.5 rounded">Active</span>}
                           </p>
-                          <p className="text-[10px] text-slate-400 truncate">{agent.role}</p>
+                          <p className="text-[10px] text-slate-500 truncate">{agent.role}</p>
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px]">
-                  <span className="text-slate-400">Status:</span>
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                  <span className="text-slate-500">Status:</span>
                   <select
                     value={agentStatus}
                     onChange={(e) => setAgentStatus(e.target.value as any)}
-                    className="bg-slate-900 text-purple-300 rounded-lg px-2 py-1 text-xs border border-white/10 focus:outline-hidden cursor-pointer"
+                    className="bg-slate-100 text-slate-800 rounded-lg px-2 py-1 text-xs border border-slate-200 focus:outline-hidden cursor-pointer"
                   >
                     <option value="online">● Online</option>
                     <option value="busy">● In Call / Busy</option>
@@ -710,25 +686,35 @@ export default function AgentCommandCenter() {
             )}
           </div>
 
+          {/* Log Out Button */}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="p-2 rounded-xl text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 transition-colors cursor-pointer"
+            title="Log out of agent console"
+          >
+            <LogOut size={16} />
+          </button>
+
           {/* Mobile Right Drawer Button */}
           <button
             type="button"
             onClick={() => setShowRightDrawerMobile(!showRightDrawerMobile)}
-            className="lg:hidden p-2 rounded-xl bg-white/5 text-slate-300 border border-white/10"
+            className="lg:hidden p-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-200"
           >
             <User size={17} />
           </button>
         </div>
       </header>
 
-      {/* 2. THREE-COLUMN CONSOLE WORKSPACE */}
+      {/* 2. THREE-COLUMN CONSOLE WORKSPACE (WHITE MODE) */}
       <div className="flex-1 flex w-full h-[calc(100vh-64px)] min-h-0 overflow-hidden relative">
         
         {/* LEFT COLUMN: Ticket Queue & Sessions List */}
-        <aside className="w-80 xl:w-88 shrink-0 h-full flex flex-col border-r border-white/10 bg-[#090d1a] z-20">
+        <aside className="w-80 xl:w-88 shrink-0 h-full flex flex-col border-r border-slate-200/90 bg-white z-20">
           
           {/* Search & Filter Header */}
-          <div className="p-3.5 border-b border-white/10 space-y-2.5">
+          <div className="p-3.5 border-b border-slate-200/80 space-y-2.5">
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
@@ -736,17 +722,17 @@ export default function AgentCommandCenter() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search ticket, member or issue..."
-                className="w-full rounded-xl bg-white/5 border border-white/10 pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500 transition-all"
+                className="w-full rounded-xl bg-slate-50 border border-slate-200 pl-9 pr-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-hidden focus:border-[#5a32fa] focus:bg-white transition-all"
               />
             </div>
 
             {/* Assignment Filter Pills */}
-            <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-white/5 text-[10px] font-bold text-slate-400">
+            <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-100 text-[10px] font-bold text-slate-600">
               <button
                 type="button"
                 onClick={() => setAssignmentFilter('all')}
                 className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
-                  assignmentFilter === 'all' ? 'bg-white/15 text-white shadow-xs' : 'hover:text-white'
+                  assignmentFilter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
                 }`}
               >
                 All ({activeCount})
@@ -755,7 +741,7 @@ export default function AgentCommandCenter() {
                 type="button"
                 onClick={() => setAssignmentFilter('mine')}
                 className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
-                  assignmentFilter === 'mine' ? 'bg-[#5a32fa] text-white shadow-xs' : 'hover:text-white'
+                  assignmentFilter === 'mine' ? 'bg-[#5a32fa] text-white shadow-xs' : 'hover:text-slate-900'
                 }`}
               >
                 My Chats ({myTicketsCount})
@@ -764,7 +750,7 @@ export default function AgentCommandCenter() {
                 type="button"
                 onClick={() => setAssignmentFilter('unassigned')}
                 className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
-                  assignmentFilter === 'unassigned' ? 'bg-amber-900/60 text-amber-300 shadow-xs' : 'hover:text-white'
+                  assignmentFilter === 'unassigned' ? 'bg-amber-100 text-amber-900 shadow-xs' : 'hover:text-slate-900'
                 }`}
               >
                 Unassigned ({unassignedCount})
@@ -772,12 +758,12 @@ export default function AgentCommandCenter() {
             </div>
 
             {/* Status Filter Tabs */}
-            <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-white/5 text-[11px] font-bold text-slate-400">
+            <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-slate-100 text-[11px] font-bold text-slate-600">
               <button
                 type="button"
                 onClick={() => setStatusFilter('active')}
                 className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
-                  statusFilter === 'active' ? 'bg-[#5a32fa] text-white shadow-xs' : 'hover:text-white'
+                  statusFilter === 'active' ? 'bg-[#5a32fa] text-white shadow-xs' : 'hover:text-slate-900'
                 }`}
               >
                 Active
@@ -786,7 +772,7 @@ export default function AgentCommandCenter() {
                 type="button"
                 onClick={() => setStatusFilter('pending')}
                 className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
-                  statusFilter === 'pending' ? 'bg-purple-900/60 text-purple-300 shadow-xs' : 'hover:text-white'
+                  statusFilter === 'pending' ? 'bg-purple-100 text-purple-900 shadow-xs' : 'hover:text-slate-900'
                 }`}
               >
                 Pending
@@ -795,7 +781,7 @@ export default function AgentCommandCenter() {
                 type="button"
                 onClick={() => setStatusFilter('resolved')}
                 className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
-                  statusFilter === 'resolved' ? 'bg-emerald-950 text-emerald-300 shadow-xs' : 'hover:text-white'
+                  statusFilter === 'resolved' ? 'bg-emerald-100 text-emerald-900 shadow-xs' : 'hover:text-slate-900'
                 }`}
               >
                 Done ({resolvedCount})
@@ -804,7 +790,7 @@ export default function AgentCommandCenter() {
                 type="button"
                 onClick={() => setStatusFilter('all')}
                 className={`py-1.5 rounded-lg text-center transition-all cursor-pointer ${
-                  statusFilter === 'all' ? 'bg-white/10 text-white' : 'hover:text-white'
+                  statusFilter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
                 }`}
               >
                 All
@@ -813,12 +799,12 @@ export default function AgentCommandCenter() {
           </div>
 
           {/* Sessions Queue List */}
-          <div className="flex-1 overflow-y-auto no-scrollbar divide-y divide-white/5">
+          <div className="flex-1 overflow-y-auto no-scrollbar divide-y divide-slate-100">
             {filteredSessions.length === 0 ? (
-              <div className="text-center py-12 px-4 text-slate-500 space-y-2">
-                <CheckCircle2 size={32} className="mx-auto text-slate-600 opacity-60" />
-                <p className="text-xs font-semibold">No tickets in this view</p>
-                <p className="text-[10px] text-slate-600">All incoming member chats will stream here live.</p>
+              <div className="text-center py-12 px-4 text-slate-400 space-y-2">
+                <CheckCircle2 size={32} className="mx-auto text-slate-300" />
+                <p className="text-xs font-semibold text-slate-600">No tickets in this view</p>
+                <p className="text-[10px] text-slate-400">All incoming member chats will stream here live.</p>
               </div>
             ) : (
               filteredSessions.map((sess) => {
@@ -830,30 +816,30 @@ export default function AgentCommandCenter() {
                     onClick={() => setSelectedSessionId(sess.id)}
                     className={`p-3.5 transition-all cursor-pointer relative group ${
                       isSelected 
-                        ? 'bg-gradient-to-r from-purple-950/70 via-purple-900/30 to-transparent border-l-3 border-[#5a32fa]' 
-                        : 'hover:bg-white/5 border-l-3 border-transparent'
+                        ? 'bg-purple-50/80 border-l-4 border-[#5a32fa]' 
+                        : 'hover:bg-slate-50 border-l-4 border-transparent'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2 mb-1.5">
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="relative shrink-0">
                           {sess.user_avatar ? (
-                            <img src={sess.user_avatar} alt={sess.user_name} className="h-8 w-8 rounded-xl object-cover ring-1 ring-white/10" />
+                            <img src={sess.user_avatar} alt={sess.user_name} className="h-8 w-8 rounded-xl object-cover ring-1 ring-slate-200" />
                           ) : (
-                            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-purple-900/50 text-purple-300 font-bold text-xs">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-purple-100 text-[#5a32fa] font-bold text-xs">
                               {sess.user_name.charAt(0)}
                             </div>
                           )}
                           <span className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ${
-                            sess.status === 'active' ? 'bg-emerald-500' : 'bg-slate-500'
+                            sess.status === 'active' ? 'bg-emerald-500' : 'bg-slate-400'
                           }`} />
                         </div>
 
                         <div className="min-w-0">
-                          <p className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-slate-200'}`}>
+                          <p className={`text-xs font-bold truncate ${isSelected ? 'text-[#5a32fa]' : 'text-slate-900'}`}>
                             {sess.user_name}
                           </p>
-                          <p className="text-[10px] font-medium text-slate-400 truncate">
+                          <p className="text-[10px] font-medium text-slate-500 truncate">
                             {sess.user_tier || 'Member'}
                           </p>
                         </div>
@@ -861,11 +847,11 @@ export default function AgentCommandCenter() {
 
                       {/* Ticket Badge & Priority */}
                       <div className="flex flex-col items-end gap-1 shrink-0">
-                        <span className="font-mono text-[10px] font-bold text-[#5a32fa] dark:text-purple-300">
+                        <span className="font-mono text-[10px] font-bold text-[#5a32fa]">
                           #{sess.ticket_number}
                         </span>
                         {sess.priority === 'high' || sess.priority === 'urgent' ? (
-                          <span className="text-[9px] font-bold text-rose-400 bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-800/40">
+                          <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
                             High SLA
                           </span>
                         ) : null}
@@ -873,7 +859,7 @@ export default function AgentCommandCenter() {
                     </div>
 
                     {/* Last message preview */}
-                    <p className="text-[11px] text-slate-400 line-clamp-1 mb-1.5 pl-10">
+                    <p className="text-[11px] text-slate-600 line-clamp-1 mb-1.5 pl-10">
                       {sess.last_message || 'New session initiated...'}
                     </p>
 
@@ -881,21 +867,21 @@ export default function AgentCommandCenter() {
                     <div className="flex items-center justify-between pl-10 text-[10px]">
                       <div>
                         {!sess.assigned_agent_name || sess.assigned_agent_name === 'Unassigned' ? (
-                          <span className="text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-800/60 px-1.5 py-0.5 rounded">
+                          <span className="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
                             Unassigned
                           </span>
                         ) : sess.assigned_agent_name === currentAgent.name ? (
-                          <span className="text-[9px] font-bold text-purple-300 bg-purple-950/80 border border-purple-800/60 px-1.5 py-0.5 rounded">
+                          <span className="text-[9px] font-bold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
                             You
                           </span>
                         ) : (
-                          <span className="text-[9px] font-medium text-slate-300 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded">
+                          <span className="text-[9px] font-medium text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
                             {sess.assigned_agent_name.split(' ')[0]}
                           </span>
                         )}
                       </div>
 
-                      <span className="text-slate-500">
+                      <span className="text-slate-400">
                         {sess.last_message_at 
                           ? formatMessageTime(sess.last_message_at) 
                           : 'Just now'}
@@ -908,26 +894,26 @@ export default function AgentCommandCenter() {
           </div>
         </aside>
 
-        {/* CENTER COLUMN: Live Agent Chat Workspace */}
-        <main className="flex-1 flex flex-col h-full min-w-0 bg-[#070913] relative">
+        {/* CENTER COLUMN: Live Agent Chat Workspace (WHITE MODE) */}
+        <main className="flex-1 flex flex-col h-full min-w-0 bg-[#f8fafc] relative">
           
           {currentSession ? (
             <>
               {/* Active Ticket Banner */}
-              <div className="shrink-0 border-b border-white/10 bg-[#0c1020]/90 px-6 py-3 flex items-center justify-between">
+              <div className="shrink-0 border-b border-slate-200/90 bg-white px-6 py-3.5 flex items-center justify-between shadow-2xs">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <h2 className="text-sm font-bold text-white truncate">
+                      <h2 className="text-sm font-bold text-slate-900 truncate">
                         {currentSession.user_name}
                       </h2>
-                      <span className="font-mono text-xs font-bold text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded-md border border-purple-800/40">
+                      <span className="font-mono text-xs font-bold text-[#5a32fa] bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200">
                         #{currentSession.ticket_number}
                       </span>
                       <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                        currentSession.status === 'active' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/40' :
-                        currentSession.status === 'pending' ? 'bg-amber-950/60 text-amber-400 border-amber-800/40' :
-                        'bg-slate-800 text-slate-300 border-white/10'
+                        currentSession.status === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                        currentSession.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                        'bg-slate-100 text-slate-700 border-slate-200'
                       }`}>
                         {currentSession.status}
                       </span>
@@ -937,8 +923,8 @@ export default function AgentCommandCenter() {
                     <div className="flex items-center gap-2 mt-1">
                       {!currentSession.assigned_agent_name || currentSession.assigned_agent_name === 'Unassigned' ? (
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded-md border border-amber-800/60">
-                            Unassigned
+                          <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                            Unassigned Ticket
                           </span>
                           <button
                             type="button"
@@ -951,10 +937,10 @@ export default function AgentCommandCenter() {
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-slate-400">Assigned:</span>
-                          <span className="text-[11px] font-bold text-white flex items-center gap-1">
+                          <span className="text-[11px] text-slate-500">Assigned:</span>
+                          <span className="text-[11px] font-bold text-slate-900 flex items-center gap-1">
                             {currentSession.assigned_agent_name === currentAgent.name ? (
-                              <span className="text-purple-300">You ({currentAgent.name})</span>
+                              <span className="text-[#5a32fa]">You ({currentAgent.name})</span>
                             ) : (
                               currentSession.assigned_agent_name
                             )}
@@ -965,15 +951,15 @@ export default function AgentCommandCenter() {
                             <select
                               value={currentSession.assigned_agent_name}
                               onChange={(e) => handleReassignTicket(e.target.value)}
-                              className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-2 py-0.5 text-[10px] font-bold text-purple-300 cursor-pointer focus:outline-hidden"
+                              className="bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg px-2 py-0.5 text-[10px] font-bold text-[#5a32fa] cursor-pointer focus:outline-hidden"
                             >
-                              <option disabled value="">Reassign...</option>
+                              <option disabled value="">Transfer to...</option>
                               {AGENT_TEAM.map(a => (
-                                <option key={a.id} value={a.name} className="bg-slate-900 text-white">
+                                <option key={a.id} value={a.name}>
                                   Assign to {a.name}
                                 </option>
                               ))}
-                              <option value="Unassigned" className="bg-slate-900 text-amber-400">Mark Unassigned</option>
+                              <option value="Unassigned">Mark Unassigned</option>
                             </select>
                           </div>
                         </div>
@@ -988,7 +974,7 @@ export default function AgentCommandCenter() {
                     <button
                       type="button"
                       onClick={() => handleUpdateStatus('resolved')}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-800/50 flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
                     >
                       <CheckCircle2 size={13} />
                       <span>Mark Resolved</span>
@@ -997,7 +983,7 @@ export default function AgentCommandCenter() {
                     <button
                       type="button"
                       onClick={() => handleUpdateStatus('active')}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold text-purple-300 bg-purple-950/60 hover:bg-purple-900/80 border border-purple-800/50 flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-300 flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
                     >
                       <RefreshCw size={13} />
                       <span>Reopen Ticket</span>
@@ -1011,21 +997,21 @@ export default function AgentCommandCenter() {
                       setCopySuccess(true);
                       setTimeout(() => setCopySuccess(false), 2000);
                     }}
-                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/10 transition-colors cursor-pointer"
+                    className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-200 transition-colors cursor-pointer"
                     title="Copy direct ticket URL"
                   >
-                    {copySuccess ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                    {copySuccess ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
                   </button>
                 </div>
               </div>
 
               {/* Message Feed */}
-              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 no-scrollbar">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 no-scrollbar bg-[#fbfcfe]">
                 
                 {/* Security context alert */}
                 <div className="max-w-md mx-auto text-center">
-                  <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-400 bg-white/5 px-3 py-1 rounded-full border border-white/5">
-                    <ShieldCheck size={12} className="text-emerald-400" />
+                  <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500 bg-white px-3 py-1 rounded-full border border-slate-200 shadow-2xs">
+                    <ShieldCheck size={12} className="text-emerald-600" />
                     Encrypted Member Live Chat Stream • Ticket #{currentSession.ticket_number}
                   </span>
                 </div>
@@ -1034,7 +1020,7 @@ export default function AgentCommandCenter() {
                   if (msg.sender_type === 'system') {
                     return (
                       <div key={msg.id} className="text-center my-3">
-                        <span className="text-[10px] font-mono text-slate-400 bg-white/5 px-3 py-1 rounded-lg border border-white/5">
+                        <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
                           {msg.content}
                         </span>
                       </div>
@@ -1053,34 +1039,34 @@ export default function AgentCommandCenter() {
                       <div className="shrink-0 mt-0.5">
                         <img 
                           src={msg.sender_avatar || (isAgent 
-                            ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=256&auto=format&fit=crop'
+                            ? currentAgent.avatar
                             : currentSession.user_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop'
                           )} 
                           alt={msg.sender_name} 
-                          className="h-8 w-8 rounded-xl object-cover ring-1 ring-white/10" 
+                          className="h-8 w-8 rounded-xl object-cover ring-1 ring-slate-200 shadow-2xs" 
                         />
                       </div>
 
                       {/* Message Bubble */}
                       <div className={`max-w-[80%] flex flex-col ${isAgent ? 'items-end' : 'items-start'}`}>
                         <div className="flex items-center gap-2 mb-1 px-1">
-                          <span className="text-xs font-bold text-slate-200">
+                          <span className="text-xs font-bold text-slate-800">
                             {msg.sender_name}
                           </span>
                           {isWhisper && (
-                            <span className="text-[9px] font-black uppercase tracking-wider text-amber-300 bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-700/60">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
                               Internal Staff Whisper
                             </span>
                           )}
-                          <span className="text-[10px] text-slate-500">{formatMessageTime(msg.created_at)}</span>
+                          <span className="text-[10px] text-slate-400">{formatMessageTime(msg.created_at)}</span>
                         </div>
 
                         <div className={`rounded-2xl px-4 py-3 text-xs sm:text-[13px] leading-relaxed shadow-xs whitespace-pre-line ${
                           isWhisper 
-                            ? 'bg-amber-950/60 border border-amber-600/50 text-amber-100 rounded-tr-xs' 
+                            ? 'bg-amber-50 border border-amber-200 text-amber-900 rounded-tr-xs' 
                             : isAgent 
                             ? 'bg-gradient-to-r from-[#5a32fa] to-[#7c3aed] text-white rounded-tr-xs shadow-purple-500/10' 
-                            : 'bg-white/10 text-slate-100 border border-white/10 rounded-tl-xs'
+                            : 'bg-white text-slate-800 border border-slate-200/90 rounded-tl-xs shadow-2xs'
                         }`}>
                           {msg.content}
                         </div>
@@ -1093,19 +1079,19 @@ export default function AgentCommandCenter() {
               </div>
 
               {/* Composer Toolbar & Textarea */}
-              <div className="shrink-0 border-t border-white/10 bg-[#0c1020]/95 backdrop-blur-xl p-4">
+              <div className="shrink-0 border-t border-slate-200/90 bg-white p-4">
                 
                 {/* Canned Macros Menu Drawer */}
                 {showMacros && (
-                  <div className="mb-3 rounded-2xl bg-[#090d1a] border border-purple-500/30 p-3 shadow-xl space-y-2 max-h-56 overflow-y-auto no-scrollbar">
-                    <div className="flex items-center justify-between pb-1 border-b border-white/10">
-                      <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                  <div className="mb-3 rounded-2xl bg-slate-50 border border-purple-200 p-3 shadow-xl space-y-2 max-h-56 overflow-y-auto no-scrollbar">
+                    <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                      <span className="text-xs font-bold text-[#5a32fa] flex items-center gap-1.5">
                         <Sparkles size={13} /> Quick Response Macros
                       </span>
                       <button 
                         type="button" 
                         onClick={() => setShowMacros(false)} 
-                        className="text-slate-400 hover:text-white"
+                        className="text-slate-400 hover:text-slate-700"
                       >
                         <X size={14} />
                       </button>
@@ -1117,10 +1103,10 @@ export default function AgentCommandCenter() {
                           key={macro.id}
                           type="button"
                           onClick={() => handleApplyMacro(macro.content)}
-                          className="text-left p-2.5 rounded-xl bg-white/5 hover:bg-purple-950/60 border border-white/5 hover:border-purple-500/40 text-xs text-slate-200 hover:text-white transition-all cursor-pointer"
+                          className="text-left p-2.5 rounded-xl bg-white hover:bg-purple-50 border border-slate-200 hover:border-purple-300 text-xs text-slate-800 transition-all cursor-pointer shadow-2xs"
                         >
-                          <p className="font-bold mb-1">{macro.label}</p>
-                          <p className="text-[11px] text-slate-400 line-clamp-1">{macro.content}</p>
+                          <p className="font-bold mb-1 text-slate-900">{macro.label}</p>
+                          <p className="text-[11px] text-slate-500 line-clamp-1">{macro.content}</p>
                         </button>
                       ))}
                     </div>
@@ -1136,7 +1122,7 @@ export default function AgentCommandCenter() {
                       className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                         !isInternalNote 
                           ? 'bg-[#5a32fa] text-white shadow-xs' 
-                          : 'text-slate-400 hover:text-white bg-white/5'
+                          : 'text-slate-600 hover:text-slate-900 bg-slate-100'
                       }`}
                     >
                       Reply to Member
@@ -1147,7 +1133,7 @@ export default function AgentCommandCenter() {
                       className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                         isInternalNote 
                           ? 'bg-amber-600 text-white shadow-xs' 
-                          : 'text-slate-400 hover:text-white bg-white/5'
+                          : 'text-slate-600 hover:text-slate-900 bg-slate-100'
                       }`}
                     >
                       <StickyNote size={12} /> Internal Note
@@ -1157,7 +1143,7 @@ export default function AgentCommandCenter() {
                   <button
                     type="button"
                     onClick={() => setShowMacros(!showMacros)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 text-purple-300 border border-purple-500/20 transition-all cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-[#5a32fa] border border-slate-200 transition-all cursor-pointer"
                   >
                     <Sparkles size={12} />
                     <span>Insert Macro</span>
@@ -1179,178 +1165,142 @@ export default function AgentCommandCenter() {
                         }
                       }}
                       placeholder={isInternalNote 
-                        ? 'Type an internal team note (only visible to support agents)...' 
-                        : `Reply to ${currentSession.user_name}... (Press Enter to send, Shift+Enter for new line)`
-                      }
-                      className={`w-full rounded-2xl p-3 text-xs sm:text-[13px] text-white placeholder-slate-500 focus:outline-hidden transition-all resize-none border ${
-                        isInternalNote 
-                          ? 'bg-amber-950/20 border-amber-600/40 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30' 
-                          : 'bg-white/5 border-white/10 focus:border-[#5a32fa] focus:ring-2 focus:ring-[#5a32fa]/20'
+                        ? 'Type private internal note for other agents... (Will NOT be seen by member)' 
+                        : `Reply to ${currentSession.user_name}... (Press Enter to send, Shift+Enter for new line)`}
+                      className={`w-full rounded-2xl p-3 text-xs sm:text-[13px] placeholder-slate-400 focus:outline-hidden resize-none transition-all ${
+                        isInternalNote
+                          ? 'bg-amber-50/70 border border-amber-300 text-amber-950 focus:border-amber-500'
+                          : 'bg-slate-50 border border-slate-200 text-slate-900 focus:bg-white focus:border-[#5a32fa] focus:ring-2 focus:ring-[#5a32fa]/10'
                       }`}
                     />
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                      <span>Shortcut: <kbd className="px-1.5 py-0.5 rounded bg-white/10 border border-white/10 font-mono text-[10px]">Enter ↵</kbd></span>
-                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      Shortcut: <kbd className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[10px]">Enter ↵</kbd>
+                    </span>
 
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="submit"
-                        disabled={!inputMessage.trim()}
-                        className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-md disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1.5 ${
-                          isInternalNote 
-                            ? 'bg-amber-600 hover:bg-amber-500' 
-                            : 'bg-gradient-to-r from-[#5a32fa] to-[#7c3aed] hover:from-[#4b26dc] hover:to-[#6d28d9] shadow-purple-500/25'
-                        }`}
-                      >
-                        <span>{isInternalNote ? 'Save Note' : 'Send Reply'}</span>
-                        <Send size={13} />
-                      </button>
-                    </div>
+                    <button
+                      type="submit"
+                      disabled={!inputMessage.trim()}
+                      className="px-4 py-2 rounded-xl font-bold text-xs sm:text-[13px] text-white bg-gradient-to-r from-[#5a32fa] to-[#7c3aed] hover:from-[#4b26dc] hover:to-[#6d28d9] shadow-md shadow-purple-500/25 disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <span>{isInternalNote ? 'Save Note' : 'Send Reply'}</span>
+                      <Send size={13} />
+                    </button>
                   </div>
                 </form>
-
               </div>
             </>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-500 space-y-4 p-8 text-center">
-              <div className="relative">
-                <div className="h-16 w-16 rounded-3xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 shadow-xl shadow-purple-500/10">
-                  <Radio size={32} className="animate-pulse text-[#5a32fa] dark:text-purple-400" />
-                </div>
-                <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                </span>
+            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-500 space-y-4">
+              <div className="h-16 w-16 rounded-3xl bg-slate-100 border border-slate-200 flex items-center justify-center shadow-xs">
+                <Headphones size={28} className="text-[#5a32fa]" />
               </div>
-              <div className="space-y-1.5 max-w-sm">
-                <h3 className="text-base font-bold text-white">Agent Standby • Ready for Chats</h3>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Listening for incoming member support messages. As soon as a user sends their first message in live chat, it will appear in the queue on the left.
+              <div className="max-w-sm space-y-1">
+                <h3 className="text-base font-bold text-slate-900">Support Queue Standby</h3>
+                <p className="text-xs text-slate-500">
+                  No ticket selected. Pick an incoming ticket from the left sidebar to start live chatting with members.
                 </p>
-              </div>
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/5 border border-white/10 text-[11px] text-emerald-400 font-mono">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                Realtime WebSocket: Connected (24/7)
               </div>
             </div>
           )}
-
         </main>
 
-        {/* RIGHT COLUMN: Customer Dossier & Knowledge Base (Desktop always, Mobile Drawer) */}
+        {/* RIGHT COLUMN: Member Profile Dossier & Intelligence (WHITE MODE) */}
         <aside className={`
-          ${showRightDrawerMobile ? 'fixed inset-0 z-50 flex flex-col bg-[#0c1020] p-6' : 'hidden'}
-          lg:flex lg:static lg:w-80 xl:w-88 shrink-0 h-full flex-col border-l border-white/10 bg-[#090d1a] overflow-y-auto no-scrollbar
+          ${showRightDrawerMobile ? 'fixed inset-y-0 right-0 z-50 flex' : 'hidden'}
+          lg:flex w-80 shrink-0 h-full flex-col border-l border-slate-200/90 bg-white overflow-y-auto no-scrollbar
         `}>
-          {/* Mobile close */}
-          <div className="lg:hidden flex items-center justify-between pb-3 border-b border-white/10 mb-4">
-            <h3 className="text-sm font-bold text-white">Member Dossier</h3>
-            <button 
-              type="button" 
-              onClick={() => setShowRightDrawerMobile(false)}
-              className="p-1 rounded-lg hover:bg-white/10"
-            >
-              <X size={16} />
-            </button>
-          </div>
-
           {currentSession ? (
             <div className="p-4 space-y-4">
               
-              {/* Profile Card */}
-              <div className="rounded-2xl bg-white/5 border border-white/10 p-4 text-center space-y-3">
+              {/* Member Card */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/90 text-center space-y-2">
                 <div className="relative inline-block">
                   <img 
                     src={currentSession.user_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop'} 
-                    alt={currentSession.user_name} 
-                    className="h-16 w-16 rounded-2xl object-cover ring-2 ring-purple-400/40 mx-auto shadow-md" 
+                    alt={currentSession.user_name}
+                    className="h-16 w-16 rounded-2xl object-cover ring-2 ring-purple-300 mx-auto"
                   />
-                  <span className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-emerald-500 ring-2 ring-[#090d1a]" />
+                  <span className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-emerald-500 ring-2 ring-white" />
                 </div>
 
                 <div>
-                  <h4 className="text-sm font-bold text-white">{currentSession.user_name}</h4>
-                  <p className="text-xs text-purple-300 font-medium">{currentSession.user_tier || 'Verified Member'}</p>
-                  <p className="text-[11px] text-slate-400">{currentSession.user_email}</p>
+                  <h3 className="text-sm font-bold text-slate-900">{currentSession.user_name}</h3>
+                  <p className="text-xs font-semibold text-[#5a32fa]">{currentSession.user_tier || 'Verified Member'}</p>
+                  <p className="text-[11px] text-slate-500">{currentSession.user_email || 'No email registered'}</p>
                 </div>
 
-                <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2 text-left text-[11px]">
+                <div className="pt-2 border-t border-slate-200 grid grid-cols-2 gap-2 text-left text-[11px]">
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Practice Area</span>
-                    <span className="font-semibold text-slate-200">Patent Prosecution</span>
+                    <span className="text-slate-400 block text-[10px]">Practice Area</span>
+                    <span className="font-semibold text-slate-700">Patent Prosecution</span>
                   </div>
                   <div>
-                    <span className="text-slate-500 block text-[10px]">Location</span>
-                    <span className="font-semibold text-slate-200">London, UK</span>
+                    <span className="text-slate-400 block text-[10px]">Location</span>
+                    <span className="font-semibold text-slate-700">London, UK</span>
                   </div>
                 </div>
               </div>
 
-              {/* Ticket Metadata */}
-              <div className="rounded-2xl bg-white/5 border border-white/10 p-4 space-y-2 text-xs">
-                <h5 className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              {/* Ticket Meta Details */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-2 text-xs">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   Ticket Attributes
-                </h5>
-
-                <div className="flex justify-between py-1 border-b border-white/5">
-                  <span className="text-slate-400">Session ID</span>
-                  <span className="font-mono font-bold text-purple-300">#{currentSession.ticket_number}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-white/5">
-                  <span className="text-slate-400">Priority</span>
-                  <span className="font-bold text-rose-400 uppercase">{currentSession.priority}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-white/5">
-                  <span className="text-slate-400">Assigned Agent</span>
-                  <span className="font-bold text-white">Sarah Jenkins</span>
-                </div>
-                <div className="flex justify-between py-1">
-                  <span className="text-slate-400">Origin Domain</span>
-                  <span className="font-mono text-[10px] text-slate-300">supportglobal...</span>
+                </p>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Session ID</span>
+                    <span className="font-mono font-bold text-[#5a32fa]">#{currentSession.ticket_number}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Priority</span>
+                    <span className="font-bold text-rose-600 uppercase text-[11px]">{currentSession.priority}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500">Assigned Agent</span>
+                    <span className="font-semibold text-slate-900">{currentSession.assigned_agent_name || 'Unassigned'}</span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-500">Origin Domain</span>
+                    <span className="font-mono text-[10px] text-slate-600 truncate max-w-[120px]">
+                      supportglobal...
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* Knowledge Assistant Snippets */}
-              <div className="rounded-2xl bg-white/5 border border-white/10 p-4 space-y-2.5">
-                <h5 className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                  <HelpCircle size={12} className="text-purple-400" />
+              {/* Quick Actions / One-Click Knowledge Insert */}
+              <div className="space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   Quick Knowledge Insert
-                </h5>
-
-                <div className="space-y-2">
-                  {CANNED_RESPONSES.slice(0, 3).map((cr) => (
-                    <div 
-                      key={cr.id}
-                      className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-all text-xs"
+                </p>
+                <div className="space-y-1.5">
+                  {CANNED_RESPONSES.slice(0, 3).map((macro) => (
+                    <button
+                      key={macro.id}
+                      type="button"
+                      onClick={() => handleApplyMacro(macro.content)}
+                      className="w-full text-left p-2.5 rounded-xl bg-white hover:bg-purple-50 border border-slate-200 hover:border-purple-300 text-xs text-slate-700 transition-all cursor-pointer shadow-2xs group"
                     >
-                      <p className="font-bold text-slate-200 mb-1">{cr.label}</p>
-                      <button
-                        type="button"
-                        onClick={() => handleApplyMacro(cr.content)}
-                        className="text-[10px] font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
-                      >
-                        <CornerDownRight size={10} /> Insert into response
-                      </button>
-                    </div>
+                      <p className="font-bold text-slate-900 group-hover:text-[#5a32fa] transition-colors">{macro.label}</p>
+                      <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                        <ArrowRight size={10} /> Insert into response
+                      </p>
+                    </button>
                   ))}
                 </div>
               </div>
-
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-500 space-y-2 my-auto">
-              <UserCheck size={32} className="mx-auto text-slate-600 opacity-60" />
-              <p className="text-xs font-semibold text-slate-400">No member selected</p>
-              <p className="text-[11px] text-slate-600">Member profile and practice details will display here when a session is active.</p>
+            <div className="p-6 text-center text-slate-400 text-xs space-y-2">
+              <User size={24} className="mx-auto text-slate-300" />
+              <p>Select a session to review member profile and practice credentials.</p>
             </div>
           )}
         </aside>
-
       </div>
-
     </div>
   );
 }
